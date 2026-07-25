@@ -25,7 +25,7 @@ export const CATEGORIES: FontDef["category"][] = [
   "My Fonts",
 ];
 
-export const ACCENT = "#FF5470";
+export const ACCENT = "#FBC02D";
 
 export const DPI_PRESETS = [72, 144, 300, 350, 600, 1200];
 
