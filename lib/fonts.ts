@@ -1,13 +1,18 @@
 import { CanvasPreset, FontDef, StyleTemplate } from "./types";
 
 export const BUILTIN_FONTS: FontDef[] = [
-  { id: "fredoka", name: "Fredoka", category: "Cute", googleParam: "Fredoka:wght@600", cssFamily: "'Fredoka'" },
+  { id: "fredoka", name: "Fredoka", category: "Cute", googleParam: "Fredoka", cssFamily: "'Fredoka'" },
   { id: "luckiest-guy", name: "Luckiest Guy", category: "Bold", googleParam: "Luckiest+Guy", cssFamily: "'Luckiest Guy'" },
   { id: "bangers", name: "Bangers", category: "Retro", googleParam: "Bangers", cssFamily: "'Bangers'" },
   { id: "press-start-2p", name: "Press Start 2P", category: "Pixel", googleParam: "Press+Start+2P", cssFamily: "'Press Start 2P'" },
-  { id: "pixelify-sans", name: "Pixelify Sans", category: "Pixel", googleParam: "Pixelify+Sans:wght@500", cssFamily: "'Pixelify Sans'" },
+  { id: "pixelify-sans", name: "Pixelify Sans", category: "Pixel", googleParam: "Pixelify+Sans", cssFamily: "'Pixelify Sans'" },
   { id: "tiny5", name: "Tiny5", category: "Pixel", googleParam: "Tiny5", cssFamily: "'Tiny5'" },
-  { id: "rubik", name: "Rubik", category: "Cute", googleParam: "Rubik:wght@600", cssFamily: "'Rubik'" },
+  { id: "rubik", name: "Rubik", category: "Cute", googleParam: "Rubik", cssFamily: "'Rubik'" },
+  { id: "caveat", name: "Caveat", category: "Handwriting", googleParam: "Caveat", cssFamily: "'Caveat'" },
+  { id: "pacifico", name: "Pacifico", category: "Handwriting", googleParam: "Pacifico", cssFamily: "'Pacifico'" },
+  { id: "permanent-marker", name: "Permanent Marker", category: "Bold", googleParam: "Permanent+Marker", cssFamily: "'Permanent Marker'" },
+  { id: "abril-fatface", name: "Abril Fatface", category: "Bold", googleParam: "Abril+Fatface", cssFamily: "'Abril Fatface'" },
+  { id: "vt323", name: "VT323", category: "Pixel", googleParam: "VT323", cssFamily: "'VT323'" },
 ];
 
 export const CATEGORIES: FontDef["category"][] = [
@@ -21,6 +26,8 @@ export const CATEGORIES: FontDef["category"][] = [
 ];
 
 export const ACCENT = "#FF5470";
+
+export const DPI_PRESETS = [72, 144, 300, 350, 600, 1200];
 
 export const CANVAS_PRESETS: CanvasPreset[] = [
   { name: "Square", w: 1000, h: 1000 },

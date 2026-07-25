@@ -31,6 +31,9 @@ export function Preview(props: TextStampState) {
     previewRef,
     overlayCanvasRef,
     onOverlayPointerDown,
+    watermarkOn,
+    watermarkText,
+    watermarkOpacity,
   } = props;
 
   const activeFont = allFonts.find((f) => f.id === activeLayer.fontId) || allFonts[0];
@@ -158,6 +161,20 @@ export function Preview(props: TextStampState) {
               style={{ pointerEvents: curvedLayers.length ? "auto" : "none" }}
               onPointerDown={onOverlayPointerDown}
             />
+            {watermarkOn && watermarkText.trim() && (
+              <div
+                className="absolute pointer-events-none"
+                style={{
+                  right: "1.6cqw",
+                  bottom: "1.2cqw",
+                  fontSize: "2.5cqw",
+                  fontFamily: "sans-serif",
+                  color: hexToRgba("#000000", watermarkOpacity),
+                }}
+              >
+                {watermarkText}
+              </div>
+            )}
           </div>
         </div>
       )}

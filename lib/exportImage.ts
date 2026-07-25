@@ -1,6 +1,17 @@
+import * as opentype from "opentype.js";
 import { BUILTIN_FONTS } from "./fonts";
-import { applyCase, escapeXml, hexToRgba, loadImageEl, measureLineWidth, renderLayerOnCtx } from "./canvasRender";
+import {
+  applyCase,
+  base64ToBuffer,
+  escapeXml,
+  hexToRgba,
+  loadImageEl,
+  measureLineWidth,
+  renderLayerOnCtx,
+} from "./canvasRender";
 import { BgMode, FontDef, TextLayer } from "./types";
+
+export type SvgMode = "editable" | "outline";
 
 export interface CanvasSettings {
   canvasWidth: number;
@@ -8,25 +19,29 @@ export interface CanvasSettings {
   bgMode: BgMode;
   bgColor: string;
   bgImage: string | null;
-  exportScale: number;
+  /** Target print resolution. 72 = "screen" scale (1x pixels). */
+  dpi: number;
   watermarkOn: boolean;
   watermarkText: string;
   watermarkOpacity: number;
 }
 
+const BASE_DPI = 72;
+
 function findFont(allFonts: FontDef[], id: string): FontDef {
   return allFonts.find((f) => f.id === id) || BUILTIN_FONTS[0];
 }
 
-export async function exportPNG(layers: TextLayer[], allFonts: FontDef[], settings: CanvasSettings) {
-  const { canvasWidth, canvasHeight, bgMode, bgColor, bgImage, exportScale, watermarkOn, watermarkText, watermarkOpacity } =
-    settings;
+/** Renders the full canvas (background + layers + watermark) and returns a raw PNG Blob (no DPI metadata yet). */
+export async function renderPngBlob(layers: TextLayer[], allFonts: FontDef[], settings: CanvasSettings): Promise<Blob> {
+  const { canvasWidth, canvasHeight, bgMode, bgColor, bgImage, dpi, watermarkOn, watermarkText, watermarkOpacity } = settings;
+  const scale = dpi / BASE_DPI;
 
   const canvas = document.createElement("canvas");
-  canvas.width = Math.ceil(canvasWidth * exportScale);
-  canvas.height = Math.ceil(canvasHeight * exportScale);
+  canvas.width = Math.ceil(canvasWidth * scale);
+  canvas.height = Math.ceil(canvasHeight * scale);
   const ctx = canvas.getContext("2d")!;
-  ctx.scale(exportScale, exportScale);
+  ctx.scale(scale, scale);
 
   if (bgMode === "white") {
     ctx.fillStyle = "#FFFFFF";
@@ -65,19 +80,107 @@ export async function exportPNG(layers: TextLayer[], allFonts: FontDef[], settin
     ctx.fillText(watermarkText, canvasWidth - 16, canvasHeight - 12);
   }
 
-  const dataUrl = canvas.toDataURL("image/png");
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("canvas.toBlob returned null"));
+    }, "image/png");
+  });
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const nameSource = layers[0]?.text || "text-image";
-  link.download = `${nameSource.slice(0, 20).trim().replace(/\s+/g, "-") || "text-image"}.png`;
-  link.href = dataUrl;
+  link.href = url;
+  link.download = filename;
   link.click();
+  URL.revokeObjectURL(url);
+}
+
+function fileNameFor(layers: TextLayer[], ext: string): string {
+  const nameSource = layers[0]?.text || "text-image";
+  return `${nameSource.slice(0, 20).trim().replace(/\s+/g, "-") || "text-image"}.${ext}`;
+}
+
+export async function exportPNG(layers: TextLayer[], allFonts: FontDef[], settings: CanvasSettings) {
+  const { setPngDpi } = await import("./pngDpi");
+  const rawBlob = await renderPngBlob(layers, allFonts, settings);
+  const withDpi = await setPngDpi(rawBlob, settings.dpi);
+  triggerDownload(withDpi, fileNameFor(layers, "png"));
+}
+
+/** Copies the rendered PNG directly to the clipboard (no file save needed). */
+export async function copyPngToClipboard(layers: TextLayer[], allFonts: FontDef[], settings: CanvasSettings): Promise<void> {
+  if (!("clipboard" in navigator) || typeof ClipboardItem === "undefined") {
+    throw new Error("Clipboard image copy isn't supported in this browser");
+  }
+  const { setPngDpi } = await import("./pngDpi");
+  const rawBlob = await renderPngBlob(layers, allFonts, settings);
+  const withDpi = await setPngDpi(rawBlob, settings.dpi);
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": withDpi })]);
+}
+
+// ============================== SVG export ==============================
+
+interface LineLayout {
+  d: string; // path data (outline mode) — empty string in editable mode
+  text: string;
+  x: number; // absolute SVG x for this line's anchor (already align-aware)
+  y: number; // absolute SVG baseline y for this line
+  width: number;
+}
+
+/** Computes per-line layout (width/position) shared by both editable and outline SVG rendering. */
+function layoutLines(
+  mctx: CanvasRenderingContext2D,
+  layer: TextLayer,
+  cssFamily: string,
+  px: number,
+  py: number
+): { lines: string[]; layouts: LineLayout[]; blockWidth: number } {
+  const displayText = applyCase(layer.text, layer.textCase);
+  const lines = displayText.split("\n");
+  mctx.font = `${layer.italic ? "italic" : "normal"} ${layer.bold ? "bold" : "normal"} ${layer.fontSize}px ${cssFamily}`;
+  const lineWidths = lines.map((l) => measureLineWidth(mctx, l, layer.letterSpacing));
+  const blockWidth = Math.max(...lineWidths, 1);
+  const lineHeight = layer.fontSize * layer.lineHeightMult;
+  const totalHeight = lineHeight * lines.length;
+
+  const layouts: LineLayout[] = lines.map((line, i) => {
+    const lw = lineWidths[i];
+    const anchorX = layer.align === "left" ? px - blockWidth / 2 : layer.align === "right" ? px + blockWidth / 2 - lw : px - lw / 2;
+    const y = py - totalHeight / 2 + lineHeight * i + layer.fontSize * 0.8;
+    return { d: "", text: line, x: anchorX, y, width: lw };
+  });
+
+  return { lines, layouts, blockWidth };
+}
+
+function buildEditableTextMarkup(layer: TextLayer, layouts: LineLayout[], fontFamilyForSvg: string, px: number, py: number, filterAttr: string, strokeAttr: string): string {
+  const anchorTag = layer.align === "left" ? "start" : layer.align === "right" ? "end" : "start"; // x already computed per-line for left-edge anchoring below
+  const styleAttr = ` font-family="${fontFamilyForSvg}" font-size="${layer.fontSize}" fill="${layer.fontColor}" font-weight="${layer.bold ? "bold" : "normal"}" font-style="${layer.italic ? "italic" : "normal"}" text-decoration="${layer.underline ? "underline" : "none"}" letter-spacing="${layer.letterSpacing}"`;
+  const transformAttr = layer.rotation ? ` transform="rotate(${layer.rotation} ${px} ${py})"` : "";
+  const tspans = layouts.map((l) => `<tspan x="${l.x}" y="${l.y}">${escapeXml(l.text)}</tspan>`).join("");
+  return `<text text-anchor="start"${styleAttr}${strokeAttr}${filterAttr}${transformAttr}>${tspans}</text>`;
+}
+
+function buildOutlinePathD(font: opentype.Font, line: string, fontSize: number, startX: number, baselineY: number, spacing: number): string {
+  let cursor = startX;
+  let d = "";
+  for (const ch of line) {
+    const glyphPath = font.getPath(ch, cursor, baselineY, fontSize);
+    d += glyphPath.toPathData(2) + " ";
+    cursor += font.getAdvanceWidth(ch, fontSize) + spacing;
+  }
+  return d.trim();
 }
 
 export async function exportSVG(
   layers: TextLayer[],
   allFonts: FontDef[],
-  settings: CanvasSettings
-): Promise<{ hasCurved: boolean }> {
+  settings: CanvasSettings,
+  svgMode: SvgMode
+): Promise<{ hasCurved: boolean; hasBuiltinFallback: boolean }> {
   const { canvasWidth, canvasHeight, bgMode, bgColor, bgImage, watermarkOn, watermarkText, watermarkOpacity } = settings;
 
   const measureCanvas = document.createElement("canvas");
@@ -85,6 +188,7 @@ export async function exportSVG(
   let defs = "";
   let content = "";
   let hasCurved = false;
+  let hasBuiltinFallback = false;
 
   let bgMarkup = "";
   if (bgMode === "white") bgMarkup = `<rect width="${canvasWidth}" height="${canvasHeight}" fill="#FFFFFF"/>`;
@@ -94,68 +198,73 @@ export async function exportSVG(
     bgMarkup = `<image href="${bgImage}" x="0" y="0" width="${canvasWidth}" height="${canvasHeight}" preserveAspectRatio="xMidYMid slice"/>`;
   }
 
-  layers.forEach((layer, idx) => {
+  for (const [idx, layer] of layers.entries()) {
     if (layer.curve !== 0) hasCurved = true;
     const font = findFont(allFonts, layer.fontId);
-    const isCustom = font.id.startsWith("custom-");
-    let fontFamilyForSvg = font.name;
-    if (isCustom && font.base64) {
-      const fam = `svgfont-${idx}`;
-      defs += `<style>@font-face{font-family:'${fam}';src:url(data:font/ttf;base64,${font.base64}) format('truetype');}</style>`;
-      fontFamilyForSvg = fam;
-    }
-
-    const displayText = applyCase(layer.text, layer.textCase);
-    const lines = displayText.split("\n");
-    mctx.font = `${layer.italic ? "italic" : "normal"} ${layer.bold ? "bold" : "normal"} ${layer.fontSize}px ${font.cssFamily}`;
-    const lineWidths = lines.map((l) => measureLineWidth(mctx, l, layer.letterSpacing));
-    const blockWidth = Math.max(...lineWidths, 1);
-    const lineHeight = layer.fontSize * layer.lineHeightMult;
-    const totalHeight = lineHeight * lines.length;
-
+    const isCustom = font.id.startsWith("custom-") && !!font.base64;
     const px = (layer.x / 100) * canvasWidth;
     const py = (layer.y / 100) * canvasHeight;
-
-    const anchor = layer.align === "left" ? "start" : layer.align === "right" ? "end" : "middle";
-    const anchorX = layer.align === "left" ? px - blockWidth / 2 : layer.align === "right" ? px + blockWidth / 2 : px;
 
     let filterAttr = "";
     if (layer.shadowOn) {
       filterAttr = ` filter="url(#shadow-${idx})"`;
       defs += `<filter id="shadow-${idx}" x="-60%" y="-60%" width="220%" height="220%"><feDropShadow dx="${layer.shadowX}" dy="${layer.shadowY}" stdDeviation="${layer.shadowBlur / 2}" flood-color="${layer.shadowColor}" flood-opacity="${layer.shadowOpacity}"/></filter>`;
     }
-    const strokeAttr = layer.outlineOn
-      ? ` paint-order="stroke fill" stroke="${layer.outlineColor}" stroke-width="${layer.outlineWidth * 2}"`
-      : "";
-    const styleAttr = ` font-family="${fontFamilyForSvg}" font-size="${layer.fontSize}" fill="${layer.fontColor}" font-weight="${layer.bold ? "bold" : "normal"}" font-style="${layer.italic ? "italic" : "normal"}" text-decoration="${layer.underline ? "underline" : "none"}" letter-spacing="${layer.letterSpacing}"`;
-    const transformAttr = layer.rotation ? ` transform="rotate(${layer.rotation} ${px} ${py})"` : "";
+    const strokeAttr = layer.outlineOn ? ` paint-order="stroke fill" stroke="${layer.outlineColor}" stroke-width="${layer.outlineWidth * 2}"` : "";
 
+    // Curved layers always flatten to a straight line (canvas/PNG-only effect for now).
     if (layer.curve !== 0) {
-      const joined = lines.join(" ");
-      content += `<text x="${px}" y="${py}" text-anchor="middle"${styleAttr}${strokeAttr}${filterAttr}${transformAttr}>${escapeXml(joined)}</text>`;
-    } else {
-      const topY = py - totalHeight / 2 + layer.fontSize * 0.8;
-      const tspans = lines
-        .map((line, i) => `<tspan x="${anchorX}" y="${topY + lineHeight * i}">${escapeXml(line)}</tspan>`)
-        .join("");
-      content += `<text text-anchor="${anchor}"${styleAttr}${strokeAttr}${filterAttr}${transformAttr}>${tspans}</text>`;
+      const displayText = applyCase(layer.text, layer.textCase).split("\n").join(" ");
+      let fontFamilyForSvg = font.name;
+      if (isCustom && font.base64) {
+        const fam = `svgfont-${idx}`;
+        defs += `<style>@font-face{font-family:'${fam}';src:url(data:font/ttf;base64,${font.base64}) format('truetype');}</style>`;
+        fontFamilyForSvg = fam;
+      } else {
+        hasBuiltinFallback = svgMode === "outline" || hasBuiltinFallback;
+      }
+      const styleAttr = ` font-family="${fontFamilyForSvg}" font-size="${layer.fontSize}" fill="${layer.fontColor}" font-weight="${layer.bold ? "bold" : "normal"}" font-style="${layer.italic ? "italic" : "normal"}"`;
+      const transformAttr = layer.rotation ? ` transform="rotate(${layer.rotation} ${px} ${py})"` : "";
+      content += `<text x="${px}" y="${py}" text-anchor="middle"${styleAttr}${strokeAttr}${filterAttr}${transformAttr}>${escapeXml(displayText)}</text>`;
+      continue;
     }
-  });
+
+    const { layouts } = layoutLines(mctx, layer, font.cssFamily, px, py);
+
+    if (svgMode === "outline" && isCustom) {
+      // True vector outlines — no font dependency at all in the exported file.
+      try {
+        const fontObj = opentype.parse(base64ToBuffer(font.base64!));
+        const groupTransform = layer.rotation ? ` transform="rotate(${layer.rotation} ${px} ${py})"` : "";
+        let pathD = "";
+        for (const l of layouts) {
+          pathD += buildOutlinePathD(fontObj, l.text, layer.fontSize, l.x, l.y, layer.letterSpacing) + " ";
+        }
+        content += `<path d="${pathD.trim()}" fill="${layer.fontColor}"${strokeAttr}${filterAttr}${groupTransform}/>`;
+      } catch {
+        // If parsing fails for any reason, fall back to editable text for this layer.
+        content += buildEditableTextMarkup(layer, layouts, font.name, px, py, filterAttr, strokeAttr);
+        hasBuiltinFallback = true;
+      }
+    } else {
+      let fontFamilyForSvg = font.name;
+      if (isCustom) {
+        const fam = `svgfont-${idx}`;
+        defs += `<style>@font-face{font-family:'${fam}';src:url(data:font/ttf;base64,${font.base64}) format('truetype');}</style>`;
+        fontFamilyForSvg = fam;
+      } else if (svgMode === "outline") {
+        hasBuiltinFallback = true;
+      }
+      content += buildEditableTextMarkup(layer, layouts, fontFamilyForSvg, px, py, filterAttr, strokeAttr);
+    }
+  }
 
   if (watermarkOn && watermarkText.trim()) {
     content += `<text x="${canvasWidth - 16}" y="${canvasHeight - 12}" text-anchor="end" font-family="sans-serif" font-size="${Math.max(12, canvasWidth * 0.025)}" fill="${hexToRgba("#000000", watermarkOpacity)}">${escapeXml(watermarkText)}</text>`;
   }
 
   const svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasWidth}" height="${canvasHeight}" viewBox="0 0 ${canvasWidth} ${canvasHeight}"><defs>${defs}</defs>${bgMarkup}${content}</svg>`;
+  triggerDownload(new Blob([svgString], { type: "image/svg+xml" }), fileNameFor(layers, "svg"));
 
-  const blob = new Blob([svgString], { type: "image/svg+xml" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const nameSource = layers[0]?.text || "text-image";
-  link.download = `${nameSource.slice(0, 20).trim().replace(/\s+/g, "-") || "text-image"}.svg`;
-  link.href = url;
-  link.click();
-  URL.revokeObjectURL(url);
-
-  return { hasCurved };
+  return { hasCurved, hasBuiltinFallback };
 }

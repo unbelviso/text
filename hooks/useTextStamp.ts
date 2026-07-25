@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BUILTIN_FONTS, googleFontsHref } from "@/lib/fonts";
 import { base64ToBuffer, bufferToBase64, clamp, makeLayer } from "@/lib/canvasRender";
-import { exportPNG, exportSVG } from "@/lib/exportImage";
+import { copyPngToClipboard, exportPNG, exportSVG, SvgMode } from "@/lib/exportImage";
 import {
   loadCustomFonts,
   loadFavorites,
@@ -27,8 +27,10 @@ export function useTextStamp() {
   const [bgColor, setBgColor] = useState("#FFFFFF");
   const [bgImage, setBgImage] = useState<string | null>(null);
 
-  const [exportScale, setExportScale] = useState(2);
+  const [dpi, setDpi] = useState(300);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("png");
+  const [svgMode, setSvgMode] = useState<SvgMode>("editable");
+  const [isCopying, setIsCopying] = useState(false);
   const [watermarkOn, setWatermarkOn] = useState(false);
   const [watermarkText, setWatermarkText] = useState("yourshopname");
   const [watermarkOpacity, setWatermarkOpacity] = useState(0.6);
@@ -387,6 +389,28 @@ export function useTextStamp() {
   };
 
   // ---------- Export ----------
+  const buildSettings = useCallback(
+    () => ({
+      canvasWidth,
+      canvasHeight,
+      bgMode,
+      bgColor,
+      bgImage,
+      dpi,
+      watermarkOn,
+      watermarkText,
+      watermarkOpacity,
+    }),
+    [canvasWidth, canvasHeight, bgMode, bgColor, bgImage, dpi, watermarkOn, watermarkText, watermarkOpacity]
+  );
+
+  const ensureFontsLoaded = useCallback(async () => {
+    for (const layer of layers) {
+      const font = allFonts.find((f) => f.id === layer.fontId) || BUILTIN_FONTS[0];
+      await document.fonts.load(`${layer.fontSize}px ${font.cssFamily}`);
+    }
+  }, [layers, allFonts]);
+
   const handleDownload = useCallback(async () => {
     if (!layers.some((l) => l.text.trim())) {
       showToast("Type some text first");
@@ -394,48 +418,40 @@ export function useTextStamp() {
     }
     setIsExporting(true);
     try {
-      for (const layer of layers) {
-        const font = allFonts.find((f) => f.id === layer.fontId) || BUILTIN_FONTS[0];
-        await document.fonts.load(`${layer.fontSize}px ${font.cssFamily}`);
-      }
-      const settings = {
-        canvasWidth,
-        canvasHeight,
-        bgMode,
-        bgColor,
-        bgImage,
-        exportScale,
-        watermarkOn,
-        watermarkText,
-        watermarkOpacity,
-      };
+      await ensureFontsLoaded();
+      const settings = buildSettings();
       if (exportFormat === "svg") {
-        const { hasCurved } = await exportSVG(layers, allFonts, settings);
+        const { hasCurved, hasBuiltinFallback } = await exportSVG(layers, allFonts, settings, svgMode);
         if (hasCurved) showToast("Note: curved layers export as straight text in SVG");
+        else if (hasBuiltinFallback) showToast("Note: built-in fonts export as editable text, not outlines");
+        else showToast("SVG saved");
       } else {
         await exportPNG(layers, allFonts, settings);
+        showToast(`PNG saved (${dpi} DPI)`);
       }
-      showToast(`${exportFormat.toUpperCase()} saved`);
     } catch {
       showToast("Export failed — try again");
     } finally {
       setIsExporting(false);
     }
-  }, [
-    layers,
-    allFonts,
-    exportFormat,
-    canvasWidth,
-    canvasHeight,
-    bgMode,
-    bgColor,
-    bgImage,
-    exportScale,
-    watermarkOn,
-    watermarkText,
-    watermarkOpacity,
-    showToast,
-  ]);
+  }, [layers, allFonts, exportFormat, svgMode, dpi, buildSettings, ensureFontsLoaded, showToast]);
+
+  const handleCopyImage = useCallback(async () => {
+    if (!layers.some((l) => l.text.trim())) {
+      showToast("Type some text first");
+      return;
+    }
+    setIsCopying(true);
+    try {
+      await ensureFontsLoaded();
+      await copyPngToClipboard(layers, allFonts, buildSettings());
+      showToast("Image copied to clipboard");
+    } catch {
+      showToast("Couldn't copy — your browser may not support this");
+    } finally {
+      setIsCopying(false);
+    }
+  }, [layers, allFonts, buildSettings, ensureFontsLoaded, showToast]);
 
   // ---------- Keyboard shortcuts ----------
   useEffect(() => {
@@ -469,8 +485,9 @@ export function useTextStamp() {
     bgMode,
     bgColor,
     bgImage,
-    exportScale,
+    dpi,
     exportFormat,
+    svgMode,
     watermarkOn,
     watermarkText,
     watermarkOpacity,
@@ -480,6 +497,7 @@ export function useTextStamp() {
     fontsReady,
     isDragging,
     isExporting,
+    isCopying,
     toast,
     compareMode,
     previewZoom,
@@ -502,8 +520,9 @@ export function useTextStamp() {
     setBgMode,
     setBgColor,
     setBgImage,
-    setExportScale,
+    setDpi,
     setExportFormat,
+    setSvgMode,
     setWatermarkOn,
     setWatermarkText,
     setWatermarkOpacity,
@@ -527,6 +546,7 @@ export function useTextStamp() {
     onBgImageChange,
     onOverlayPointerDown,
     handleDownload,
+    handleCopyImage,
     showToast,
   };
 }

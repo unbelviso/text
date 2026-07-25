@@ -22,7 +22,14 @@ export function ColorPicker({
           type="color"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-9 h-9 rounded-lg border border-neutral-200 cursor-pointer"
+          className="w-9 h-9 shrink-0 rounded-lg border border-neutral-200 cursor-pointer"
+        />
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="flex-1 min-w-0 rounded-lg border border-neutral-200 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2"
+          style={{ ["--tw-ring-color" as any]: ACCENT }}
         />
       </div>
     );

@@ -2,9 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TextStamp — Turn any font into a PNG in seconds",
-  description:
-    "Type a phrase, pick a font (or upload your own), and export a transparent PNG or SVG. Built for Etsy sellers, designers, and social media makers.",
+  title: "Font Image Maker",
+  description: "Create beautiful text images with any font.",
 };
 
 export default function RootLayout({
