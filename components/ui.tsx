@@ -3,11 +3,11 @@
 import { ACCENT } from "@/lib/fonts";
 
 export function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`bg-white rounded-2xl border border-neutral-200 p-4 ${className}`}>{children}</div>;
+  return <div className={`bg-neutral-50 rounded-3xl p-5 shadow-sm ${className}`}>{children}</div>;
 }
 
 export function Label({ children }: { children: React.ReactNode }) {
-  return <label className="text-sm font-medium text-neutral-600">{children}</label>;
+  return <label className="text-xs font-extrabold uppercase tracking-wide text-neutral-400">{children}</label>;
 }
 
 export function ToggleChip({
@@ -24,11 +24,11 @@ export function ToggleChip({
   return (
     <button
       onClick={onClick}
-      className="text-xs px-2.5 py-1.5 rounded-lg border transition"
+      className="text-xs px-3.5 py-2 rounded-xl border transition"
       style={
         active
-          ? { backgroundColor: ACCENT, borderColor: ACCENT, color: "white", ...style }
-          : { borderColor: "#e5e5e5", color: "#525252", ...style }
+          ? { backgroundColor: ACCENT, borderColor: ACCENT, color: "#171717", ...style }
+          : { borderColor: "rgba(0,0,0,0.08)", background: "#fff", color: "#525252", ...style }
       }
     >
       {label}
@@ -61,8 +61,8 @@ export function SliderRow({
 }) {
   return (
     <div className={compact ? "" : "mb-3"}>
-      <div className="flex items-center justify-between mb-1">
-        <span className={compact ? "text-xs text-neutral-500" : "text-sm font-medium text-neutral-600"}>{label}</span>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className={compact ? "text-xs text-neutral-500 font-medium" : "text-xs font-bold text-neutral-500"}>{label}</span>
         <span className="text-xs text-neutral-400">
           {decimals ? value.toFixed(decimals) : value}
           {unit}
@@ -98,16 +98,33 @@ export function SegmentedToggle<T extends string>({
         <button
           key={opt.id}
           onClick={() => onChange(opt.id)}
-          className="flex-1 text-xs py-1.5 rounded-lg border transition capitalize"
+          className="flex-1 text-xs py-2 rounded-xl border transition capitalize font-semibold"
           style={
             value === opt.id
-              ? { backgroundColor: ACCENT, borderColor: ACCENT, color: "white" }
-              : { borderColor: "#e5e5e5", color: "#525252" }
+              ? { backgroundColor: ACCENT, borderColor: ACCENT, color: "#171717" }
+              : { borderColor: "rgba(0,0,0,0.08)", background: "#fff", color: "#525252" }
           }
         >
           {opt.label}
         </button>
       ))}
     </div>
+  );
+}
+
+/** New: pill on/off switch, replaces native checkboxes for Outline/Shadow/Watermark toggles. */
+export function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className="relative w-10 h-[22px] rounded-full transition"
+      style={{ backgroundColor: checked ? ACCENT : "#e0e0e0" }}
+    >
+      <span
+        className="absolute top-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-all"
+        style={{ left: checked ? 20 : 2 }}
+      />
+    </button>
   );
 }
